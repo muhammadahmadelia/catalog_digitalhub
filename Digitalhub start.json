@@ -1,0 +1,12 @@
+{
+    "brands": [
+        {
+            "brand": "Adidas Sport",
+            "code": "SP",
+            "glasses_type": {
+                "sunglasses": true,
+                "eyeglasses": true
+            }
+        }
+    ]
+}
