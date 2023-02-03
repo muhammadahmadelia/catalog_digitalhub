@@ -12,231 +12,133 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
 # from datetime import datetime
 import chromedriver_autoinstaller
+from models.store import Store
+from models.brand import Brand
 from models.product import Product
 from models.variant import Variant
 from models.metafields import Metafields
 import glob
 import requests
-# import pandas as pd
+from datetime import datetime
+import threading
 
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as Imag
 from openpyxl.utils import get_column_letter
 from PIL import Image
-# from natsort 
+
+
+class myScrapingThread(threading.Thread):
+    def __init__(self, threadID: int, name: str, obj, username: str, brand: str, brand_code: str, product_number: str, glasses_type: str, headers: dict) -> None:
+        threading.Thread.__init__(self)
+        self.threadID = threadID
+        self.name = name
+        self.username = username
+        self.brand = brand
+        self.brand_code = brand_code
+        self.product_number = product_number
+        self.glasses_type = glasses_type
+        self.headers = headers
+        self.obj = obj
+        self.status = 'in progress'
+        pass
+
+    def run(self):
+        self.obj.scrape_product(self.username, self.brand, self.brand_code, self.product_number, self.glasses_type, self.headers)
+        self.status = 'completed'
+
+    def active_threads(self):
+        return threading.activeCount()
 
 class Digitalhub_Scraper:
-    def __init__(self, DEBUG: bool, result_filename: str) -> None:
+    def __init__(self, DEBUG: bool, result_filename: str, logs_filename: str) -> None:
         self.DEBUG = DEBUG
+        self.data = []
         self.result_filename = result_filename
+        self.logs_filename = logs_filename
+        self.thread_list = []
+        self.thread_counter = 0
         self.chrome_options = Options()
         self.chrome_options.add_argument('--disable-infobars')
         self.chrome_options.add_argument("--start-maximized")
         self.chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         self.args = ["hide_console", ]
         self.browser = webdriver.Chrome(options=self.chrome_options, service_args=self.args)
-        self.data = []
         pass
 
-    def controller(self, brands: list[dict], url: str, username: str, password: str):
+    def controller(self, store: Store, brands_with_types: list[dict]) -> None:
         try:
-            self.browser.get(url)
+            cookies, fs_token = '', ''
+
+            self.browser.get(store.link)
             self.wait_until_browsing()
 
-            if self.login(username, password):
+            if self.login(store.username, store.password):
                 self.browser.get('https://digitalhub.marcolin.com/shop')
                 self.wait_until_browsing()
 
                 if self.wait_until_element_found(20, 'xpath', '//div[@id="mCSB_1_container"]'):
-                    print('Scraping products for')
-                    for brand in brands:
+                    
+                    for brand_with_type in brands_with_types:
+                        brand: str = brand_with_type['brand']
+                        brand_code: str = str(brand_with_type['code']).strip()
+                        print(f'Brand: {brand}')
 
-                        brand_urls = self.get_brand_urls(brand)
+                        for glasses_type in brand_with_type['glasses_type']:
 
-                        for brand_url in brand_urls:
-                            self.open_new_tab(brand_url[0])
+                            brand_url = self.get_brand_url(brand, brand_code, glasses_type)
+                            self.open_new_tab(brand_url)
                             self.wait_until_browsing()
+                            start_time = datetime.now()
 
-                            if self.wait_until_element_found(30, 'xpath', '//div[@class="row mt-4 list grid-divider"]/div'):
-                                glasses_type = brand_url[1]
-                                print(f'Brand: {brand["brand"]} | Type: {glasses_type}')
-                                total_products_found = str(self.browser.find_element(By.XPATH, '//div[@class="row mt-4 results"]/div').text).strip().split(' ')[0]
-                                print(f'Products found: {str(total_products_found)}')
-
+                            if self.wait_until_element_found(90, 'xpath', '//div[@class="row mt-4 list grid-divider"]/div'):
+                                total_products = self.get_total_products()
                                 scraped_products = 0
+                                
+                                print(f'Type: {glasses_type} | Total products: {total_products}')
+                                print(f'Start Time: {start_time.strftime("%A, %d %b %Y %I:%M:%S %p")}')
+
+                                self.printProgressBar(scraped_products, total_products, prefix = 'Progress:', suffix = 'Complete', length = 50)
                                 while True:
-                                    products_data = self.get_all_products_from_page()
-                                    scraped_products += len(products_data)
 
-                                    for index, product_data in enumerate(products_data):
-                                        number, name, gender, url = '', '', '', ''
-                                        number = str(product_data['number']).strip()
-                                        name = str(product_data['name']).strip()
-                                        gender = str(product_data['gender']).strip()
-                                        url = str(product_data['url']).strip()
+                                    for product_data in self.get_all_products_from_page():
+                                        product_number = str(product_data['number']).strip().upper()
+                                        product_url = str(product_data['url']).strip()
                                         
-                                        self.open_new_tab(url)
-                                        self.wait_until_browsing()
 
-                                        if self.wait_until_element_found(25, 'xpath', '//div[@class="col-7 details"]/p/span'):
-                                            try:
-                                                divs = self.browser.find_element(By.XPATH, '//div[@class="slick-list draggable"]').find_elements(By.XPATH, './/div[@class="slick-track"]/div[@style="width: 128px;"]')
-                                                for i in range(0, len(divs)):
-                                                    product = Product()
-                                                    # product.url = url
-                                                    product.brand = brand["brand"]
-                                                    product.number = str(number).strip().upper()
-                                                    product.name = str(name).strip().upper()
-                                                    
-                                                    metafields = Metafields()
-                                                    metafields.for_who = str(gender).strip().title()
-                                                    if metafields.for_who == 'Male': metafields.for_who = 'Men'
-                                                    elif metafields.for_who == 'Female': metafields.for_who = 'Women'
-                                                    else: metafields.for_who = ''
-                                                    product.type = glasses_type
+                                        if not cookies: cookies = self.get_cookies()
+                                        if not fs_token: fs_token = self.get_fs_token()
+                                        headers = self.get_headers(fs_token, cookies, product_url)
 
-                                                    # print(product.number, metafields.for_who, product.name)
-                                                
-                                                    try:
-                                                        if i == 0: self.move_to_first_variant()
+                                        # self.scrape_product(store.username, brand, product_number, glasses_type, headers)
+                                        self.create_thread(store.username, brand, brand_code, product_number, glasses_type, headers)
+                                        if self.thread_counter >= 50: 
+                                            self.wait_for_thread_list_to_complete()
+                                            self.save_to_json(self.data)
+                                        scraped_products += 1
 
-                                                        self.select_variant_image(divs[i])
-                                                        self.click_to_make_price_visible()
-
-
-                                                        try:
-                                                            if not product.number and not product.name:
-                                                                number_name = str(self.browser.find_element(By.CSS_SELECTOR, 'p.model').text).strip()
-                                                                if not product.number:
-                                                                    product.number = str(number_name.split(' ')[0]).strip()
-                                                                if not product.name and len(number_name) > 1:
-                                                                    product.name = str(number_name.split(' ')[-1]).strip()
-                                                        except Exception as e:
-                                                            if self.DEBUG: print(f'Exception in getting number and name: {str(e)}')
-                                                            else: pass
-
-                                                        try:
-                                                            for inner_div in self.browser.find_elements(By.XPATH, '//div[@class="details mt-4"]/div[@class="row"]/div'):
-                                                                for p in inner_div.find_elements(By.TAG_NAME, 'p'):
-                                                                    value = str(p.text).strip()
-                                                                    if str('Material').strip().lower() in str(value).lower(): 
-                                                                        metafields.frame_material = str(p.find_element(By.TAG_NAME, 'span').text).strip()
-                                                                    elif str('Shape').strip().lower() in str(value).lower(): 
-                                                                        metafields.frame_shape = str(p.find_element(By.TAG_NAME, 'span').text).strip()
-                                                                    elif not metafields.for_who and str('Gender').strip().lower() in str(value).lower(): 
-                                                                        metafields.for_who = str(p.find_element(By.TAG_NAME, 'span').text).strip()
-                                                        except Exception as e:
-                                                            if self.DEBUG: print(f'Exception in getting frame material and shape: {str(e)}')
-                                                            else: pass
-
-                                                        try:
-                                                            for p in self.browser.find_elements(By.XPATH, '//div[@class="col-7 details"]/p'):
-                                                                value = str(p.text).strip()
-                                                                if str('Color').strip().lower() in str(value).lower():
-                                                                    new_value = str(p.find_element(By.TAG_NAME, 'span').text).strip()
-                                                                    # print(i, new_value)
-                                                                    product.frame_code = str(new_value).split('-')[0].strip().upper()
-                                                                    product.frame_color = str(new_value).split('-')[-1].strip().split(' / ')[0].strip().upper()
-                                                                    product.lens_color = str(new_value).split('-')[-1].strip().split(' / ')[-1].strip().upper()
-                                                                elif str('Lens type').strip().lower() in str(value).lower():
-                                                                    metafields.lens_technology = str(p.find_element(By.TAG_NAME, 'span').text).strip()
-                                                        except Exception as e:
-                                                            if self.DEBUG: print(f'Exception in getting color code: {str(e)}')
-                                                            else: pass
-
-                                                        try:
-                                                            sizes, availabilities, prices, gtin = [], [], [], []
-                                                            size_titles, wholesale_prices, listing_prices,  availabilities, gtin, sizes = self.get_size_price_status()
-                                                            
-                                                            if len(size_titles) != len(availabilities):
-                                                                print(url, sizes, availabilities)
-                                                            else:
-                                                                for x in range(0, len(size_titles)):
-                                                                    variant = Variant()
-                                                                    variant.position = (x + 1)
-                                                                    variant.title = size_titles[x]
-                                                                    variant.sku = f'{product.number} {product.frame_code} {variant.title}'
-                                                                    if availabilities[x] == 'Active': variant.inventory_quantity = 1
-                                                                    else: variant.inventory_quantity = 0
-                                                                    variant.found_status = 1
-                                                                    variant.wholesale_price = wholesale_prices[x]
-                                                                    variant.listing_price = listing_prices[x]
-                                                                    if len(gtin) > x:
-                                                                        variant.barcode_or_gtin = str(gtin[x]).strip()
-                                                                    else: variant.barcode_or_gtin = ''
-                                                                    variant.size = sizes[x]
-                                                                    product.variants = variant
-                                                        except Exception as e:
-                                                            if self.DEBUG: 
-                                                                print(f'Exception in getting sizes, price and availabilities: {e}')
-                                                                print(size_titles, prices, availabilities, gtin, sizes)
-                                                            else: pass
-
-                                                        try:
-                                                            for variant in product.variants:
-                                                                if str(variant.size).strip():
-                                                                    metafields.product_size += f'{str(variant.size).strip()}, '
-
-                                                                if str(variant.barcode_or_gtin).strip():
-                                                                    metafields.gtin1 += f'{str(variant.barcode_or_gtin).strip()}, '
-
-                                                            if str(metafields.product_size).strip()[-1] == ',': metafields.product_size = str(metafields.product_size).strip()[0:-1]
-                                                            if str(metafields.gtin1).strip()[-1] == ',': metafields.gtin1 = str(metafields.gtin1).strip()[0:-1]
-                                                        except: pass
-                                                        
-                                                        try: metafields.img_url = str(self.browser.find_element(By.XPATH, '//img[@class="ngxImageZoomThumbnail"]').get_attribute('src')).strip()
-                                                        except: pass
-
-                                                        # try:
-                                                        #     if metafields.img_url:
-                                                        #         src = ''
-                                                        #         for _ in range(0, 10):
-                                                        #             try:
-                                                        #                 self.browser.find_element(By.CSS_SELECTOR, 'svg-icon[src$="360.svg"]').click()
-                                                        #                 break
-                                                        #             except: pass
-                                                        #         for _ in range(0, 20):
-                                                        #             try:
-                                                        #                 src = self.browser.find_element(By.XPATH, '//div[@id="image-rotator"]/div[@class="window"]/div/img').get_attribute('src')
-                                                        #                 break
-                                                        #             except: sleep(0.2)
-                                                        #         if src:
-                                                        #             metafields.img_360_urls = src
-                                                        #             for i in range(2, 9):
-                                                        #                 metafields.img_360_urls = str(src).replace('_01.jpg', f'_0{i}.jpg')
-                                                        #         sleep(0.3)
-                                                        #         self.browser.find_element(By.CSS_SELECTOR, 'svg-icon[class="circle-cross-icon"]').click()
-                                                        # except: pass    
-
-                                                        # try:
-                                                        #     for j in range(1, 9):
-                                                        #         img_url_360 = f'https://nfseu.marcolin.com/Immagini/360/{str(brand["code"]).upper()}/{str(product.number).upper()}_{str(product.frame_code).upper()}/{str(product.number).upper()}_{str(product.frame_code).upper()}_0{j}.jpg'
-                                                        #         metafields.img_360_urls.append(img_url_360)
-                                                        # except Exception as e:
-                                                        #     if self.DEBUG: print(f'Exception in getting 360 image urls: {e}')
-                                                        #     else: pass
-                                                        product.url = f'https://digitalhub.marcolin.com/shop/product-detail?idLine={str(brand["code"]).upper()}&idCode={product.number.upper().replace("/", "-")}&prod={product.number.upper().replace("/", "-")}{product.variants[0].title}{product.frame_code.upper().replace("/", "-")}'
-                                                        product.metafields = metafields
-                                                        
-                                                    except: pass
-                                                    self.data.append(product)
-                                                    self.save_to_json(self.data)
-                                                    
-                                            except: pass
-                                        self.close_last_tab() 
+                                        self.printProgressBar(scraped_products, total_products, prefix = 'Progress:', suffix = 'Complete', length = 50)
                                     
                                     if self.is_next_page(): self.move_to_next_page()
-                                    else: break                           
-                                print(f'Products scraped: {str(scraped_products)}')
+                                    else: break
 
+                            self.wait_for_thread_list_to_complete()
+                            self.save_to_json(self.data)
+                            end_time = datetime.now()
+                            
+                            print(f'End Time: {end_time.strftime("%A, %d %b %Y %I:%M:%S %p")}')
+                            print('Duration: {}\n'.format(end_time - start_time))
+                            
                             self.close_last_tab()
 
-            else: print(f'Failed to login \nURL: {self.URL}\nUsername: {str(username)}\nPassword: {str(password)}')
+            else: print(f'Failed to login \nURL: {store.link}\nUsername: {str(store.username)}\nPassword: {str(store.password)}')
         except Exception as e:
-            if self.DEBUG: print(f'Exception in scraper controller: {e}')
-            else: pass
+            if self.DEBUG: print(f'Exception in Digitalhub_Scraper controller: {e}')
+            self.print_logs(f'Exception in Digitalhub_Scraper controller: {e}')
         finally: 
             self.browser.quit()
+            self.wait_for_thread_list_to_complete()
+            self.save_to_json(self.data)
 
     def wait_until_browsing(self) -> None:
         while True:
@@ -258,8 +160,12 @@ class Digitalhub_Scraper:
 
                     WebDriverWait(self.browser, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div[class*="welcome-msg my-5"] > h3')))
                     login_flag = True
-                except Exception as e: print(e)
+                except Exception as e: 
+                    self.print_logs(str(e))
+                    if self.DEBUG: print(str(e))
+                    else: pass
         except Exception as e:
+            self.print_logs(f'Exception in login: {str(e)}')
             if self.DEBUG: print(f'Exception in login: {str(e)}')
             else: pass
         finally: return login_flag
@@ -285,23 +191,25 @@ class Digitalhub_Scraper:
         except: pass
         finally: return flag
 
-    def get_brand_urls(self, brand: dict) -> str:
-        brand_urls = []
+    def get_brand_url(self, brand: str, brand_code: str, glasses_type: str) -> str:
+        brand_url = ''
         try:
             div_tags = self.browser.find_element(By.XPATH, '//div[@id="mCSB_1_container"]').find_elements(By.XPATH, './/div[@class="brand-box col-2"]')
+            xpath_glasses_type = ''
+            if glasses_type == 'Sunglasses':
+                xpath_glasses_type = ".//a[contains(text(), 'Sun')]"
+            elif glasses_type == 'Eyeglasses':
+                xpath_glasses_type = ".//a[contains(text(), 'Optical')]"
             for div_tag in div_tags:
-                if bool(brand['glasses_type']['sunglasses']):
-                    href = div_tag.find_element(By.XPATH, ".//a[contains(text(), 'Sun')]").get_attribute('href')
-                    if f'codeLine1={str(brand["code"]).strip().upper()}' in href:
-                        brand_urls.append([f'{href}&limit=80', 'Sunglasses'])
-                if bool(brand['glasses_type']['eyeglasses']):
-                    href = div_tag.find_element(By.XPATH, ".//a[contains(text(), 'Optical')]").get_attribute('href')
-                    if f'codeLine1={str(brand["code"]).strip().upper()}' in href:
-                        brand_urls.append([f'{href}&limit=80', 'Eyeglasses'])
+                href = div_tag.find_element(By.XPATH, xpath_glasses_type).get_attribute('href')
+                if f'codeLine1={str(brand_code).strip().upper()}' in href:
+                    brand_url = f'{href}&limit=80'
+
         except Exception as e:
+            self.print_logs(f'Exception in get_brand_url: {str(e)}')
             if self.DEBUG: print(f'Exception in get_brand_url: {str(e)}')
             else: pass
-        finally: return brand_urls
+        finally: return brand_url
 
     def open_new_tab(self, url: str) -> None:
         # open category in new tab
@@ -312,68 +220,14 @@ class Digitalhub_Scraper:
     def close_last_tab(self) -> None:
         self.browser.close()
         self.browser.switch_to.window(self.browser.window_handles[len(self.browser.window_handles) - 1])
-
-    def get_all_products_from_page(self) -> list[dict]:
-        products_on_page = []
-        try:
-            for _ in range(0, 30):
-                products_on_page = []
-                try:
-                    for div_tag in self.browser.find_elements(By.XPATH, '//div[@class="row mt-4 list grid-divider"]/div'): 
-                        ActionChains(self.browser).move_to_element(div_tag).perform()
-                        product_url, product_number, product_brand, product_gender = '', '', '', ''
-                        sizes = []
-
-                        product_url = div_tag.find_element(By.TAG_NAME, 'a').get_attribute('href')
-                        text = str(div_tag.find_element(By.XPATH, './/p[@class="model-name"]').text).strip()
-                        product_number = str(text.split(' ')[0]).strip()
-                        product_name = str(text).replace(product_number, '').strip()
-                        product_brand = str(div_tag.find_element(By.XPATH, '//div[@class="line-name d-flex justify-content-between"]/p').text).strip()
-                        # if str('WEB').strip().lower() == str(product_brand).strip().lower():
-                        #     try:
-                        #         if str(product_number[:2]).strip().lower() != str('WB').strip().lower():
-                        #             new_number = quote(product_number)
-                        #             new_url = f'https://digitalhub.marcolin.com/shop/products?searchText={new_number}'
-                        #             new_brand_name = self.search_for_brand_name(new_url, product_number)
-                        #             if new_brand_name and str(new_brand_name).strip().lower() != str(product_brand).strip().lower(): product_brand = new_brand_name
-                        #     except Exception as e: 
-                        #         if self.DEBUG: print(f'Exception as in getting new brand name: {str(e)}')
-                        #         else: pass
-
-                        try: product_gender = str(div_tag.find_element(By.XPATH, './/div[@class="info"]/p[contains(text(), "Gender")]').text).replace('Gender:', '').strip()
-                        except: pass
-                        
-                        try:
-                            size_value = str(div_tag.find_element(By.XPATH, './/div[@class="info"]/p[contains(text(), "Size")]').text).replace('Size:', '').strip()
-                            
-                            if ',' in size_value:
-                                for value in size_value.split(','):
-                                    sizes.append(str(value).strip())
-                            else: sizes.append(size_value)
-                        except: pass
-                        
-                        json_data = {
-                            'number': product_number,
-                            'name': product_name,
-                            'brand': product_brand,
-                            'gender': product_gender,
-                            'url': product_url,
-                            'sizes': sizes
-                        }
-                        if json_data not in products_on_page: products_on_page.append(json_data)
-                    break
-                except: sleep(0.3)
-        except Exception as e:
-            if self.DEBUG: print(f'Exception in get_all_products_from_page: {str(e)}')
-            else: pass
-        finally: return products_on_page
-
+    
     def is_next_page(self) -> bool:
         next_page_flag = False
         try:
             next_span_style = self.browser.find_element(By.XPATH, '//span[@class="next"]').get_attribute('style')
             if ': hidden;' not in next_span_style: next_page_flag = True
         except Exception as e:
+            self.print_logs(f'Exception in is_next_page: {str(e)}')
             if self.DEBUG: print(f'Exception in is_next_page: {str(e)}')
             else: pass
         finally: return next_page_flag
@@ -386,9 +240,10 @@ class Digitalhub_Scraper:
             ActionChains(self.browser).move_to_element(next_page_span).click().perform()
             self.wait_for_next_page_to_load(current_page_number)
         except Exception as e:
+            self.print_logs(f'Exception in move_to_next_page: {str(e)}')
             if self.DEBUG: print(f'Exception in move_to_next_page: {str(e)}')
             else: pass
-    
+
     def wait_for_next_page_to_load(self, current_page_number: str) -> None:
         for _ in range(0, 100):
             try:
@@ -402,147 +257,189 @@ class Digitalhub_Scraper:
                         except: sleep(0.3)
                     break
             except: sleep(0.3)
-     
-    def move_to_first_variant(self) -> None:
-        while True:
-            try:
-                elements = self.browser.find_elements(By.XPATH, '//span[@class="n-arrow prev slick-arrow"]')
-                if len(elements) == 2:
-                    ActionChains(self.browser).move_to_element(elements[0]).click().perform()
-                    sleep(0.3)
-                else: break
-            except: pass
-    
-    def select_variant_image(self, divs: list) -> None:
-        for _ in range(0, 5):
-            try:
-                ActionChains(self.browser).move_to_element(divs).click().perform()
-                sleep(0.3)
-                break
-            except:
-                try:
-                    elements = self.browser.find_elements(By.XPATH, '//span[@class="n-arrow next slick-arrow"]')
-                    if len(elements) == 2:
-                        ActionChains(self.browser).move_to_element(elements[0]).click().perform()
-                        sleep(0.3)
-                except Exception as e: 
-                    if self.DEBUG: print(str(e))
-                    else: pass
-
-    def click_to_make_price_visible(self) -> None:
+ 
+    def get_total_products(self) -> int:
+        total_products = 0
         try:
-            if not self.is_price_visible():
-                element = self.browser.find_element(By.XPATH, '//svg-icon[@class="eye-icon"]')
-                ActionChains(self.browser).move_to_element(element).click().perform()
-                sleep(0.4)
-
-                for li in self.browser.find_elements(By.XPATH, '//ul[@aria-labelledby="basic-link"]/li'):
-                    if str('Cost and SRP').strip().lower() in str(li.text).strip().lower():
-                        ActionChains(self.browser).move_to_element(li).click().perform()
-                        self.wait_until_price_is_shown()
+            total_products = int(str(self.browser.find_element(By.XPATH, '//div[@class="row mt-4 results"]/div').text).strip().split(' ')[0])
         except Exception as e:
-            if self.DEBUG: print(f'Exception in click_to_make_price_visible: {str(e)}')
+            if self.DEBUG: print(f'Exception in get_total_products: {e}')
+            self.print_logs(f'Exception in get_total_products: {e}')
+        finally: return total_products
+
+    def get_all_products_from_page(self) -> list[dict]:
+        products_on_page = []
+        try:
+            for _ in range(0, 30):
+                products_on_page = []
+                try:
+                    for div_tag in self.browser.find_elements(By.XPATH, '//div[@class="row mt-4 list grid-divider"]/div'): 
+                        ActionChains(self.browser).move_to_element(div_tag).perform()
+                        product_url, product_number = '', ''
+
+                        product_url = div_tag.find_element(By.TAG_NAME, 'a').get_attribute('href')
+                        text = str(div_tag.find_element(By.XPATH, './/p[@class="model-name"]').text).strip()
+                        product_number = str(text.split(' ')[0]).strip()
+                        
+                        json_data = {
+                            'number': product_number,
+                            'url': product_url
+                        }
+                        if json_data not in products_on_page: products_on_page.append(json_data)
+                    break
+                except: sleep(0.3)
+        except Exception as e:
+            self.print_logs(f'Exception in get_all_products_from_page: {str(e)}')
+            if self.DEBUG: print(f'Exception in get_all_products_from_page: {str(e)}')
             else: pass
+        finally: return products_on_page
 
-    def is_price_visible(self) -> bool:
+    def scrape_product(self, username: str, brand: str, brand_code: str, product_number: str, glasses_type: str, headers: dict) -> None:
         try:
-            for td in self.browser.find_elements(By.XPATH, '//table[@class="table table-borderless"]/tbody/tr/td'):
-                if str('Suggested Retail Price').strip().lower() in str(td.text).strip().lower(): return True
-            return False
-        except: return False
+            url = f'https://digitalhub.marcolin.com/api/model?codeSalesOrg=IA01&soldCode={username}&shipCode=&idLine={str(brand_code).upper()}&idCode={product_number}&spareParts=null'
 
-    def wait_until_price_is_shown(self) -> bool:
-        flag = False
-        for _ in range(0, 30):
-            try:
-                tds_label = self.browser.find_elements(By.XPATH, '//table[@class="table table-borderless"]/tbody/tr/td')
-                for i in range(0, len(tds_label)):
-                    if str('Suggested Retail Price').strip().lower() in str(tds_label[i].text).strip().lower(): 
-                        flag = True
-                        break
-                if flag: break
-            except: sleep(0.3)
-            finally: return flag
+            response = self.make_request(url, headers)
+            if response.status_code == 200:
+                json_data = json.loads(response.text)
+                product_name = str(json_data['data']['name']).strip().replace(str(product_number).strip().upper(), '').strip()
+                frame_codes = []
 
-    def get_size_price_status(self):
-        size_titles, wholesale_prices, listing_prices, availability, gtin = [], [], [], [], []
-        sizes = []
-        caliber, rod, bridge = '', '', ''
-        try:
-            trs = self.browser.find_elements(By.XPATH, '//table[@class="table table-borderless"]/tbody/tr')
-            
-            for j in range(1, len(trs)):
-                tr = trs[j].find_element(By.XPATH, '//table[@class="table table-borderless inner-table"]/tr')
-                
-                # tds_value = tr.find_elements_by_tag_name('td')
-                try:
-                    value = str(tr.find_elements(By.XPATH, ".//td[contains(text(), '€')]")[0].text).replace('€', '').strip()
-                    value = f"{str(value[0:-3]).strip().replace(',', '').strip()}.00"
-                    wholesale_prices.append(value)
-                except Exception as e: 
-                    if self.DEBUG: print(f'Exception in wholesale_price: {str(e)}')
-                    else: pass
+                for json_product in json_data['data']['products']:
+                    if str(json_product['colorCode']).strip().upper() not in frame_codes:
+                        product = Product()
 
-                try:
-                    value = str(tr.find_elements(By.XPATH, ".//td[contains(text(), '€')]")[1].text).replace('€', '').strip()
-                    value = f"{str(value[0:-3]).strip().replace(',', '').strip()}.00"
-                    listing_prices.append(value)
-                except Exception as e: 
-                    if self.DEBUG: print(f'Exception in listing_prices: {str(e)}')
-                    else: pass
-                
-            for tr in self.browser.find_elements(By.XPATH, '//table[@class="table table-borderless inner-table"]/tr'):
-                tds_value = tr.find_elements(By.TAG_NAME, 'td')
-                try:
-                    caliber, rod, bridge = str(tds_value[0].text).strip(), str(tds_value[1].text).strip(), str(tds_value[2].text).strip()
-                    # print(len(tds_value), f'{caliber}-{rod}-{bridge}')
-                    size_titles.append(caliber)
-                    sizes.append(f'{caliber}-{rod}-{bridge}')
-                    # if not metafields.product_size: metafields.product_size =f'{caliber}-{rod}-{bridge}'
-                    caliber, rod, bridge = '', '', ''
-                except Exception as e: 
-                    if self.DEBUG: print(f'Exception in product size: {str(e)}')
-                    else: pass
+                        product.url = str(headers['Referer']).strip().split('&prod=')[0] + f'&prod={json_product["idCode"]}'
+                        product.brand = brand
+                        product.number = str(json_product['codLevel1']).strip().upper().replace('-', '/')
+                        product.name = product_name
+                        product.frame_code = str(json_product['colorCode']).strip().upper()
+                        frame_codes.append(product.frame_code)
+                        
+                        colorDescription = str(json_product['colorDescription']).strip().split(' - ')[-1].strip().split(' / ')
+                        if len(colorDescription) == 1: product.frame_color = colorDescription[0].strip().title()
+                        elif len(colorDescription) == 2:
+                            product.frame_color = colorDescription[0].strip().title()
+                            product.lens_color = colorDescription[1].strip().title()
+                        
+                        product.type = glasses_type
+                        product.status = 'active'
+                        barcodes, sizes = [], []
+                        
+                        for json_product2 in json_data['data']['products']:
+                            if str(json_product2['colorCode']).strip().upper() == product.frame_code:
+                                variant = Variant()
+                                variant.position = len(product.variants) + 1
+                                if 'sizeDescription' in json_product2:
+                                    variant.title = str(json_product2['sizeDescription']).strip()
+                                variant.sku = f'{product.number} {product.frame_code} {variant.title}'
+                                
+                                if 'aux' in json_product2:
+                                    if 'availabilityColor' in json_product2['aux']:
+                                        if json_product2['aux']['availabilityColor'] == 2: variant.inventory_quantity = 1
+                                        else: variant.inventory_quantity = 0
+                                    else: variant.inventory_quantity = 0
+                                else: variant.inventory_quantity = 0
+                                variant.found_status = 1
+                                if 'price' in json_product2:
+                                    variant.wholesale_price = format(int(json_product2['price']), '.2f')
+                                if 'publicPrice' in json_product2:
+                                    variant.listing_price = format(int(json_product2['publicPrice']), '.2f')
+                                if 'barcode' in json_product2:
+                                    variant.barcode_or_gtin = str(json_product2['barcode']).strip()
+                                if 'aux' in json_product2:
+                                    if 'rodLength' in json_product2['aux'] and 'noseLength' in json_product2['aux']:
+                                        variant.size = f'{variant.title}-{json_product2["aux"]["rodLength"]}-{json_product2["aux"]["noseLength"]}'
+                                product.variants = variant
+                                barcodes.append(variant.barcode_or_gtin)
+                                sizes.append(variant.size)
 
-                
-                try:
-                    span_tag_class = tr.find_element(By.CSS_SELECTOR, 'span[class^="availability"]').get_attribute('class')
-                    # if str('a-0').strip().lower() in  str(span_tag_class).strip().lower(): availability.append('Draft')
-                    # if str('a-1').strip().lower() in  str(span_tag_class).strip().lower(): availability.append('Draft')
-                    if str('a-2').strip().lower() in  str(span_tag_class).strip().lower(): availability.append('Active')
-                    else: availability.append('Draft')
-                    # elif str('a-3').strip().lower() in  str(span_tag_class).strip().lower(): availability.append('Draft')
-                except: 
-                    availability.append('Not Available')
+                        
+                        metafields = Metafields()
 
-            
-            # for j in range(1, len(trs)):
-            try:
-                for button in self.browser.find_elements(By.XPATH, '//svg-icon[@class="arrow-icon"]'):
-                    ActionChains(self.browser).move_to_element(button).perform()
-                    button.click()
-                    sleep(0.5)
-                    for _ in range(0, 20):
                         try:
-                            tags = self.browser.find_elements(By.XPATH, '//table[@class="table table-borderless inner-table open-shadow"]/tr[@class="d-flex drawer"]')
-                            for tag in tags:    
-                                g = str(tag.find_element(By.CSS_SELECTOR, 'div[class$="ean-detail"] > p > span').text).strip()
-                                if g: 
-                                    if g not in gtin: gtin.append(g)
-                                else: gtin.append('')
-                            # close_element = self.browser.find_element(By.XPATH, '//table[@class="table table-borderless inner-table open-shadow"]/tr[@class="d-flex"]').find_element(By.XPATH, '//svg-icon[@class="arrow-icon"]')
-                            # ActionChains(self.browser).move_to_element(close_element).perform()
-                            # close_element.click()
-                            # sleep(0.3)
-                            break
-                        except Exception as e:pass
-            except Exception as e: pass
-        except Exception as e:
-            if self.DEBUG: print(f'Exception in get_size_price_status: {str(e)}')
-            else: pass
-        finally: return size_titles, wholesale_prices, listing_prices, availability, gtin, sizes
+                            metafields.for_who = str(json_product['aux']['genderDesc']).strip().title()
+                            if metafields.for_who == 'Male': metafields.for_who = 'Men'
+                            elif metafields.for_who == 'Female': metafields.for_who = 'Women'
+                        except: pass
+                        
+                        try: metafields.product_size = ', '.join(sizes)
+                        except: pass
+                        try: metafields.lens_technology = str(json_product['aux']['typeLensesDesc']).strip().title()
+                        except: pass
+                        try: metafields.frame_material = str(json_product['aux']['productGroupDesc']).strip().title()
+                        except: pass
+                        try: metafields.frame_shape = str(json_product['aux']['formDesc']).strip().title()
+                        except: pass
+                        try: metafields.gtin1 = ', '.join(barcodes)
+                        except: pass
+                        
+                        try: metafields.img_url = str(json_product['image']).strip().replace('\/', '\\')
+                        except: pass
+                        # try: 
+                        #     for image360 in json_product['images360']:
+                        #         metafields.img_360_urls = str(image360).strip().replace('\/', '/')
+                        # except: pass
 
-    def save_to_json(self, products: list[Product]):
+                        product.metafields = metafields
+
+                        self.data.append(product)
+            else: self.print_logs(f'{response.status_code} for {url}')
+        except Exception as e:
+            if self.DEBUG: print(f'Exception in scrape_product_data: {e}')
+            self.print_logs(f'Exception in scrape_product_data: {e}')
+
+    def get_fs_token(self) -> str:
+        fs_token = ''
+        try:
+            fs_token = self.browser.execute_script('return window.localStorage.getItem(arguments[0]);', 'fs_token')
+        except Exception as e:
+            if self.DEBUG: print(f'Exception in get_fs_token: {e}')
+            self.print_logs(f'Exception in get_fs_token: {e}')
+        finally: return fs_token
+
+    def get_cookies(self) -> str:
+        cookies = ''
+        try:
+            browser_cookies = self.browser.get_cookies()
+            for browser_cookie in browser_cookies:
+                if browser_cookie["name"] == 'php-console-server':
+                    cookies = f'{browser_cookie["name"]}={browser_cookie["value"]}; _gat_UA-153573784-1=1; {cookies}'
+                else: cookies = f'{browser_cookie["name"]}={browser_cookie["value"]}; {cookies}'
+            cookies = cookies.strip()[:-1]
+        except Exception as e:
+            if self.DEBUG: print(f'Exception in get_cookies: {e}')
+            self.print_logs(f'Exception in get_cookies: {e}')
+        finally: return cookies
+
+    def get_headers(self, fs_token: str, cookies: str, referer_url: str) -> dict:
+        return {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Authorization': f'Bearer {fs_token}',
+            'Connection': 'keep-alive',
+            'Cookie': cookies,
+            'Host': 'digitalhub.marcolin.com',
+            'Referer': referer_url,
+            'sec-ch-ua': '"Not?A_Brand";v="8", "Chromium";v="108", "Google Chrome";v="108"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+        }
+    
+    def make_request(self, url, headers):
+        response = ''
+        for _ in range(0, 10):
+            try:
+                response = requests.get(url=url, headers=headers)
+                if response.status_code == 200: break
+            except: sleep(0.2)
+        return response
+
+    def save_to_json(self, products: list[Product]) -> None:
         try:
             json_products = []
             for product in products:
@@ -554,8 +451,8 @@ class Digitalhub_Scraper:
                         'sku': variant.sku, 
                         'inventory_quantity': variant.inventory_quantity,
                         'found_status': variant.found_status,
-                        'wholesale_price': variant.wholesale_price,
                         'listing_price': variant.listing_price, 
+                        'wholesale_price': variant.wholesale_price,
                         'barcode_or_gtin': variant.barcode_or_gtin,
                         'size': variant.size,
                         'weight': variant.weight
@@ -580,7 +477,8 @@ class Digitalhub_Scraper:
                         { 'key': 'frame_material', 'value': product.metafields.frame_material }, 
                         { 'key': 'frame_shape', 'value': product.metafields.frame_shape },
                         { 'key': 'gtin1', 'value': product.metafields.gtin1 }, 
-                        { 'key': 'img_url', 'value': product.metafields.img_url }
+                        { 'key': 'img_url', 'value': product.metafields.img_url },
+                        { 'key': 'img_360_urls', 'value': product.metafields.img_360_urls }
                     ],
                     'variants': json_varinats
                 }
@@ -591,7 +489,56 @@ class Digitalhub_Scraper:
             
         except Exception as e:
             if self.DEBUG: print(f'Exception in save_to_json: {e}')
-            else: pass
+            self.print_logs(f'Exception in save_to_json: {e}')
+    
+    # print logs to the log file
+    def print_logs(self, log: str) -> None:
+        try:
+            with open(self.logs_filename, 'a') as f:
+                f.write(f'\n{log}')
+        except: pass
+
+    def printProgressBar(self, iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█', printEnd = "\r") -> None:
+        """
+        Call in a loop to create terminal progress bar
+        @params:
+            iteration   - Required  : current iteration (Int)
+            total       - Required  : total iterations (Int)
+            prefix      - Optional  : prefix string (Str)
+            suffix      - Optional  : suffix string (Str)
+            decimals    - Optional  : positive number of decimals in percent complete (Int)
+            length      - Optional  : character length of bar (Int)
+            fill        - Optional  : bar fill character (Str)
+            printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
+        """
+        percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+        filledLength = int(length * iteration // total)
+        bar = fill * filledLength + '-' * (length - filledLength)
+        print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
+        # Print New Line on Complete
+        if iteration == total: 
+            print()
+
+    def create_thread(self, username: str, brand: str, brand_code: str, product_number: str, glasses_type: str, headers: dict) -> None:
+        thread_name = "Thread-"+str(self.thread_counter)
+        self.thread_list.append(myScrapingThread(self.thread_counter, thread_name, self, username, brand, brand_code, product_number, glasses_type, headers))
+        self.thread_list[self.thread_counter].start()
+        self.thread_counter += 1
+
+    def is_thread_list_complted(self) -> bool:
+        for obj in self.thread_list:
+            if obj.status == "in progress":
+                return False
+        return True
+
+    def wait_for_thread_list_to_complete(self) -> None:
+        while True:
+            result = self.is_thread_list_complted()
+            if result: 
+                self.thread_counter = 0
+                self.thread_list.clear()
+                break
+            else: sleep(1)
 
 
 def read_data_from_json_file(DEBUG, result_filename: str):
@@ -774,19 +721,33 @@ try:
     f = open('requirements/digitalhub.json')
     data = json.loads(f.read())
     f.close()
-    url = data['url']
-    username = data['username']
-    password = data['password']
-    
+
+    store = Store()
+    store.link = data['url']
+    store.username = data['username']
+    store.password = data['password']
+    store.login_flag = True
+
     result_filename = 'requirements/Digitalhub Results.json'
-    Digitalhub_Scraper(DEBUG, result_filename).controller(brands, url, username, password)
+
+    if not os.path.exists('Logs'): os.makedirs('Logs')
+
+    log_files = glob.glob('Logs/*.txt')
+    if len(log_files) > 5:
+        oldest_file = min(log_files, key=os.path.getctime)
+        os.remove(oldest_file)
+        log_files = glob.glob('Logs/*.txt')
+
+    scrape_time = datetime.now().strftime('%d-%m-%Y %H-%M-%S')
+    logs_filename = f'Logs/Logs {scrape_time}.txt'
+    
+    Digitalhub_Scraper(DEBUG, result_filename, logs_filename).controller(store, brands)
     
     for filename in glob.glob('Images/*'): os.remove(filename)
     data = read_data_from_json_file(DEBUG, result_filename)
     os.remove(result_filename)
 
     saving_picture_in_excel(data)
-
 except Exception as e:
     if DEBUG: print('Exception: '+str(e))
     else: pass
