@@ -728,16 +728,17 @@ def read_data_from_json_file(DEBUG, result_filename: str):
                     # variant.found_status = json_variant['found_status']
                     wholesale_price = str(json_variant['wholesale_price']).strip()
                     listing_price = str(json_variant['listing_price']).strip()
-                    # variant.barcode_or_gtin = str(json_variant['barcode_or_gtin']).strip()
+                    barcode_or_gtin = str(json_variant['barcode_or_gtin']).strip()
                     # variant.size = str(json_variant['size']).strip()
                     # variant.weight = str(json_variant['weight']).strip()
                     # product.variants = variant
-
-                    image_attachment = download_image(img_url)
-                    if image_attachment:
-                        with open(f'Images/{sku}.jpg', 'wb') as f: f.write(image_attachment)
-                        crop_downloaded_image(f'Images/{sku}.jpg')
-                    data.append([number, frame_code, frame_color, lens_color, brand, sku, wholesale_price, listing_price])
+                    image_filename = f'Images/{sku}.jpg'
+                    if not os.path.exists(image_filename): 
+                        image_attachment = download_image(img_url)
+                        if image_attachment:
+                            with open(image_filename, 'wb') as f: f.write(image_attachment)
+                            crop_downloaded_image(f'Images/{sku}.jpg')
+                    data.append([number, frame_code, frame_color, lens_color, brand, sku, wholesale_price, listing_price, barcode_or_gtin])
     except Exception as e:
         if DEBUG: print(f'Exception in read_data_from_json_file: {e}')
         else: pass
@@ -803,7 +804,8 @@ def saving_picture_in_excel(data: list):
     worksheet.cell(row=1, column=6, value='SKU')
     worksheet.cell(row=1, column=7, value='Wholesale Price')
     worksheet.cell(row=1, column=8, value='Listing Price')
-    worksheet.cell(row=1, column=9, value="Image")
+    worksheet.cell(row=1, column=9, value="UPC")
+    worksheet.cell(row=1, column=10, value="Image")
 
     for index, d in enumerate(data):
         new_index = index + 2
@@ -816,13 +818,14 @@ def saving_picture_in_excel(data: list):
         worksheet.cell(row=new_index, column=6, value=d[5])
         worksheet.cell(row=new_index, column=7, value=d[6])
         worksheet.cell(row=new_index, column=8, value=d[7])
+        worksheet.cell(row=new_index, column=9, value=d[8])
 
-        image = f'Images/{d[-3]}.jpg'
+        image = f'Images/{d[-4]}.jpg'
         if os.path.exists(image):
             im = Image.open(image)
             width, height = im.size
             worksheet.row_dimensions[new_index].height = height
-            worksheet.add_image(Imag(image), anchor='I'+str(new_index))
+            worksheet.add_image(Imag(image), anchor='J'+str(new_index))
             # col_letter = get_column_letter(9)
             # worksheet.column_dimensions[col_letter].width = width
         # print(index, image)
