@@ -133,3 +133,6 @@ dmypy.json
 *.bat
 Images/
 digitalhub.json
+Logs/*.txt
+*.exe
+requirements/*.json

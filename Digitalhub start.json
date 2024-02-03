@@ -1,6 +1,11 @@
 {
     "brands": [
         {
+            "brand": "Adidas Originals",
+            "code": "OR",
+            "glasses_type": [ "Sunglasses", "Eyeglasses" ]
+        },
+        {
             "brand": "Adidas Sport",
             "code": "SP",
             "glasses_type": [ "Sunglasses", "Eyeglasses" ]
