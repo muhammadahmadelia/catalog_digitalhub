@@ -15,7 +15,7 @@ from selenium.webdriver.chrome.options import Options
 from datetime import datetime
 # import chromedriver_autoinstaller
 from models.store import Store
-from models.brand import Brand
+# from models.brand import Brand
 from models.product import Product
 from models.variant import Variant
 from models.metafields import Metafields
@@ -154,7 +154,7 @@ class Digitalhub_Scraper:
             self.print_logs(f'Exception in Digitalhub_Scraper controller: {e}')
         finally: 
             self.browser.quit()
-            self.wait_for_thread_list_to_complete()
+            # self.wait_for_thread_list_to_complete()
             self.save_to_json(self.data)
 
     def wait_until_browsing(self) -> None:
