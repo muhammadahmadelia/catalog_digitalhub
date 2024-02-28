@@ -1,8 +1,8 @@
 {
     "brands": [
         {
-            "brand": "Adidas Sport",
-            "code": "SP",
+            "brand": "MaxMara",
+            "code": "MM",
             "glasses_type": [ "Sunglasses" ]
         }
     ]
