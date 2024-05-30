@@ -440,6 +440,9 @@ class Digitalhub_Scraper:
                                     try: metafields.frame_material = variant_json.get('fields').get('Material__c')
                                     except: pass
 
+                                    try: metafields.fitting_info = variant_json.get('fields').get('Fitting__c')
+                                    except: pass
+
 
                                     try: metafields.gtin1 = variant_json.get('fields').get('EAN__c')
                                     except: pass
@@ -620,6 +623,7 @@ class Digitalhub_Scraper:
                         { 'key': 'frame_shape', 'value': product.metafields.frame_shape },
                         { 'key': 'gtin1', 'value': product.metafields.gtin1 }, 
                         { 'key': 'img_url', 'value': product.metafields.img_url },
+                        { 'key': 'fitting_info', 'value': product.metafields.fitting_info },
                         { 'key': 'img_360_urls', 'value': product.metafields.img_360_urls }
                     ],
                     'variants': json_varinats
@@ -694,6 +698,7 @@ def read_data_from_json_file(DEBUG, result_filename: str):
 
             for json_d in json_data:
                 number, frame_code, brand, img_url, frame_color, lens_color = '', '', '', '', '', ''
+                fitting_info = ''
                 # product = Product()
                 brand = json_d['brand']
                 number = str(json_d['number']).strip().upper()
@@ -721,6 +726,7 @@ def read_data_from_json_file(DEBUG, result_filename: str):
                     # elif json_metafiels['key'] == 'frame_shape':metafields.frame_shape = str(json_metafiels['value']).strip().title()
                     # elif json_metafiels['key'] == 'gtin1':metafields.gtin1 = str(json_metafiels['value']).strip().title()
                     if json_metafiels['key'] == 'img_url':img_url = str(json_metafiels['value']).strip()
+                    if json_metafiels['key'] == 'fitting_info': fitting_info = str(json_metafiels['value']).strip()
                     # elif json_metafiels['key'] == 'img_360_urls':
                     #     value = str(json_metafiels['value']).strip()
                     #     if '[' in value: value = str(value).replace('[', '').strip()
@@ -750,7 +756,7 @@ def read_data_from_json_file(DEBUG, result_filename: str):
                         if image_attachment:
                             with open(image_filename, 'wb') as f: f.write(image_attachment)
                             crop_downloaded_image(f'Images/{sku}.jpg')
-                    data.append([number, frame_code, frame_color, lens_color, brand, sku, wholesale_price, listing_price, barcode_or_gtin])
+                    data.append([number, frame_code, frame_color, lens_color, brand, sku, wholesale_price, listing_price, barcode_or_gtin, fitting_info])
     except Exception as e:
         if DEBUG: print(f'Exception in read_data_from_json_file: {e}')
         else: pass
@@ -817,6 +823,7 @@ def saving_picture_in_excel(data: list):
     worksheet.cell(row=1, column=7, value='Wholesale Price')
     worksheet.cell(row=1, column=8, value='Listing Price')
     worksheet.cell(row=1, column=9, value="UPC")
+    worksheet.cell(row=1, column=9, value="Fitting Info")
     worksheet.cell(row=1, column=10, value="Image")
 
     for index, d in enumerate(data):
@@ -831,8 +838,9 @@ def saving_picture_in_excel(data: list):
         worksheet.cell(row=new_index, column=7, value=d[6])
         worksheet.cell(row=new_index, column=8, value=d[7])
         worksheet.cell(row=new_index, column=9, value=d[8])
+        worksheet.cell(row=new_index, column=9, value=d[9])
 
-        image = f'Images/{d[-4]}.jpg'
+        image = f'Images/{d[-5]}.jpg'
         if os.path.exists(image):
             im = Image.open(image)
             width, height = im.size

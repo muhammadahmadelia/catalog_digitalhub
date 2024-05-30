@@ -1,9 +1,9 @@
 {
     "brands": [
         {
-            "brand": "MaxMara",
-            "code": "MM",
-            "glasses_type": [ "Sunglasses" ]
+            "brand": "Tom Ford",
+            "code": "FT",
+            "glasses_type": [ "Sunglasses", "Eyeglasses" ]
         }
     ]
 }

@@ -13,6 +13,7 @@ class Metafields:
         self.__frame_shape = ''
         self.__gtin1 = ''
         self.__img_url = ''
+        self.fitting_info = ''
         self.__img_360_urls = []
         pass
 
@@ -119,6 +120,14 @@ class Metafields:
     @img_url.setter
     def img_url(self, img_url: str):
         self.__img_url = img_url
+
+    @property
+    def fitting_info(self) -> str:
+        return self.__fitting_info
+
+    @fitting_info.setter
+    def fitting_info(self, fitting_info: str):
+        self.__fitting_info = fitting_info
 
     @property
     def img_360_urls(self) -> list[str]:
