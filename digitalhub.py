@@ -58,7 +58,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 #         return threading.activeCount()
 
 class Digitalhub_Scraper:
-    def __init__(self, DEBUG: bool, result_filename: str, logs_filename: str) -> None:
+    def __init__(self, DEBUG: bool, result_filename: str, logs_filename: str, chrome_path: str) -> None:
         self.DEBUG = DEBUG
         self.data = []
         self.result_filename = result_filename
@@ -69,7 +69,8 @@ class Digitalhub_Scraper:
         self.chrome_options.add_argument('--disable-infobars')
         self.chrome_options.add_argument("--start-maximized")
         self.chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        self.browser = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=self.chrome_options)
+        # self.browser = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=self.chrome_options)
+        self.browser = webdriver.Chrome(service=ChromeService(chrome_path), options=self.chrome_options)
         self.auth_token: str = ''
         self.fwuid: str = ''
         pass
@@ -253,7 +254,7 @@ class Digitalhub_Scraper:
     def get_total_products(self) -> int:
         total_products = 0
         try:
-            input_string = str(self.browser.find_element(By.XPATH, '//h3[@class="title-16 uppercase"]').text).strip()
+            input_string = str(self.browser.find_element(By.XPATH, '//h3[contains(@class, "title-16 uppercase")]').text).strip()
             if input_string:
                 match = re.search(r'\((\d+)\)', input_string)
 
@@ -263,6 +264,7 @@ class Digitalhub_Scraper:
         except Exception as e:
             if self.DEBUG: print(f'Exception in get_total_products: {e}')
             self.print_logs(f'Exception in get_total_products: {e}')
+            input('Wait')
         finally: return total_products
 
     def get_api_headers(self, url) -> dict:
@@ -893,8 +895,15 @@ try:
 
     scrape_time = datetime.now().strftime('%d-%m-%Y %H-%M-%S')
     logs_filename = f'Logs/Logs {scrape_time}.txt'
+
+    chrome_path = ''
+    if not chrome_path:
+        chrome_path = ChromeDriverManager().install()
+        if 'chromedriver.exe' not in chrome_path:
+            chrome_path = str(chrome_path).split('/')[0].strip()
+            chrome_path = f'{chrome_path}\\chromedriver.exe'
     
-    Digitalhub_Scraper(DEBUG, result_filename, logs_filename).controller(store, brands)
+    Digitalhub_Scraper(DEBUG, result_filename, logs_filename, chrome_path).controller(store, brands)
     
     for filename in glob.glob('Images/*'): os.remove(filename)
     data = read_data_from_json_file(DEBUG, result_filename)
