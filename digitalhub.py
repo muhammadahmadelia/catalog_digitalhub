@@ -825,8 +825,8 @@ def saving_picture_in_excel(data: list):
     worksheet.cell(row=1, column=7, value='Wholesale Price')
     worksheet.cell(row=1, column=8, value='Listing Price')
     worksheet.cell(row=1, column=9, value="UPC")
-    worksheet.cell(row=1, column=9, value="Fitting Info")
-    worksheet.cell(row=1, column=10, value="Image")
+    worksheet.cell(row=1, column=10, value="Fitting Info")
+    worksheet.cell(row=1, column=11, value="Image")
 
     for index, d in enumerate(data):
         new_index = index + 2
@@ -840,7 +840,7 @@ def saving_picture_in_excel(data: list):
         worksheet.cell(row=new_index, column=7, value=d[6])
         worksheet.cell(row=new_index, column=8, value=d[7])
         worksheet.cell(row=new_index, column=9, value=d[8])
-        worksheet.cell(row=new_index, column=9, value=d[9])
+        worksheet.cell(row=new_index, column=10, value=d[9])
 
         image = f'Images/{d[-5]}.jpg'
         if os.path.exists(image):
@@ -908,7 +908,7 @@ try:
     for filename in glob.glob('Images/*'): os.remove(filename)
     data = read_data_from_json_file(DEBUG, result_filename)
     os.remove(result_filename)
-
+    
     saving_picture_in_excel(data)
 except Exception as e:
     if DEBUG: print('Exception: '+str(e))
